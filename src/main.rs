@@ -1,15 +1,24 @@
 use std::{
     env, fs,
+    io::{self, IsTerminal},
     path::{Path, PathBuf},
     process::Command,
 };
+use url::Url;
 
 const OLD_ROOTS: &str = "/btr_pool/old_roots";
 
 struct Config {
     root_path: PathBuf,
     input_path: PathBuf,
+    hyperlink: HyperlinkMode,
     existing_only: bool,
+}
+
+enum HyperlinkMode {
+    Auto,
+    Always,
+    Never,
 }
 
 enum CommandLine {
@@ -32,6 +41,8 @@ fn main() {
         }
     };
 
+    let show_hyperlink = should_hyperlink(&cfg.hyperlink);
+
     let dates = match list_dates(&cfg.root_path) {
         Ok(dates) => dates,
         Err(err) => {
@@ -45,7 +56,7 @@ fn main() {
         if cfg.existing_only && !target.exists() {
             continue;
         }
-        print_ls_for_date(&date, &target);
+        print_ls_for_date(&date, &target, show_hyperlink);
     }
 }
 
@@ -79,8 +90,8 @@ fn make_target_path(root_path: &Path, date: &str, input_path: &Path) -> PathBuf 
     target
 }
 
-fn print_ls_for_date(date: &str, target: &Path) {
-    println!("{date}:");
+fn print_ls_for_date(date: &str, target: &Path, show_hyperlink: bool) {
+    print_date_header(date, target, show_hyperlink);
     if !target.exists() {
         println!("<missing: The path does not exist>");
         return;
@@ -99,9 +110,34 @@ fn print_ls_for_date(date: &str, target: &Path) {
     }
 }
 
+fn print_date_header(date: &str, target: &Path, show_hyperlink: bool) {
+    let text = format!("{date}:");
+
+    if show_hyperlink {
+        if let Ok(url) = Url::from_file_path(target) {
+            println!("{}", hyperlink(&text, url.as_str()));
+            return;
+        }
+    }
+    println!("{text}");
+}
+
+fn hyperlink(text: &str, url: &str) -> String {
+    format!("\x1b]8;;{url}\x1b\\{text}\x1b]8;;\x1b\\")
+}
+
+fn should_hyperlink(mode: &HyperlinkMode) -> bool {
+    match mode {
+        HyperlinkMode::Always => true,
+        HyperlinkMode::Auto => io::stdout().is_terminal(),
+        HyperlinkMode::Never => false,
+    }
+}
+
 fn parse_args() -> Result<CommandLine, String> {
     let mut root_path = PathBuf::from(OLD_ROOTS);
     let mut input_path = None;
+    let mut hyperlink = HyperlinkMode::Auto;
     let mut existing_only = false;
     // let mut reverse = false;
 
@@ -120,6 +156,21 @@ fn parse_args() -> Result<CommandLine, String> {
             }
             "--existing-only" => {
                 existing_only = true;
+            }
+            "--hyperlink" => {
+                let Some(mode) = args.next() else {
+                    return Err("--hyperlink requires an argument".to_string());
+                };
+                hyperlink = match mode.as_str() {
+                    "auto" => HyperlinkMode::Auto,
+                    "always" => HyperlinkMode::Always,
+                    "never" => HyperlinkMode::Never,
+                    _ => {
+                        return Err(format!(
+                            "Invalid --hyperlink value: {mode} (expected auto, always, or never)"
+                        ));
+                    }
+                };
             }
             _ if arg.starts_with('-') => return Err(format!("Unknown argument: {arg}")),
             _ => {
@@ -142,12 +193,19 @@ fn parse_args() -> Result<CommandLine, String> {
     Ok(CommandLine::Run(Config {
         root_path,
         input_path,
+        hyperlink,
         existing_only,
     }))
 }
 
 fn print_usage() {
     println!(
-        "Usage: oroot [OPTIONS] /absolute/path\n\nOptions:\n  --root-path PATH    Old roots directory (default: {OLD_ROOTS})\n  --existing-only     Skip dates where the target path does not exist\n  -h, --help          Show this help"
+        "Usage: oroot [OPTIONS] /absolute/path
+
+Options:
+  --root-path PATH               Old roots directory (default: {OLD_ROOTS})
+  --hyperlink auto|always|never  Show hyperlink (OSC8) (default: auto)
+  --existing-only                Skip dates where the target path does not exist (default: false)
+  -h, --help                     Show this help"
     );
 }
