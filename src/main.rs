@@ -1,3 +1,4 @@
+use clap::{Parser, Subcommand, ValueEnum};
 use std::{
     env, fs,
     io::{self, IsTerminal},
@@ -15,31 +16,83 @@ struct Config {
     existing_only: bool,
 }
 
+#[derive(Parser)]
+#[command(version, about, long_about = None)]
+struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    Ls {
+        #[arg(long, default_value = OLD_ROOTS)]
+        root_path: PathBuf,
+
+        #[arg(long, value_enum, default_value_t = HyperlinkMode::Auto)]
+        hyperlink: HyperlinkMode,
+
+        #[arg(long)]
+        existing_only: bool,
+
+        input_path: PathBuf,
+    },
+    Enum {
+        #[arg(long, default_value = "\\n")]
+        separator: String,
+
+        input_path: PathBuf,
+    },
+}
+
+#[derive(Clone, ValueEnum)]
 enum HyperlinkMode {
     Auto,
     Always,
     Never,
 }
 
-enum CommandLine {
-    Run(Config),
-    Help,
+impl std::fmt::Display for HyperlinkMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HyperlinkMode::Auto => write!(f, "auto"),
+            HyperlinkMode::Always => write!(f, "always"),
+            HyperlinkMode::Never => write!(f, "never"),
+        }
+    }
 }
 
 fn main() {
-    let cfg = match parse_args() {
-        Ok(CommandLine::Run(cfg)) => cfg,
-        Ok(CommandLine::Help) => {
-            print_usage();
-            return;
-        }
-        Err(err) => {
-            eprintln!("error: {err}");
-            eprintln!();
-            print_usage();
-            std::process::exit(2);
-        }
-    };
+    let cli = Cli::parse();
+
+    match cli.command {
+        Commands::Ls {
+            root_path,
+            hyperlink,
+            existing_only,
+            input_path,
+        } => run_ls(Config {
+            root_path,
+            input_path: expand_input_path(input_path),
+            hyperlink,
+            existing_only,
+        }),
+        Commands::Enum {
+            separator,
+            input_path,
+        } => run_enum(
+            Path::new(OLD_ROOTS),
+            &expand_input_path(input_path),
+            parse_separator(&separator),
+        ),
+    }
+}
+
+fn run_ls(cfg: Config) {
+    if !cfg.input_path.is_absolute() {
+        eprintln!("error: input-path must be absolute");
+        std::process::exit(2);
+    }
 
     let show_hyperlink = should_hyperlink(&cfg.hyperlink);
 
@@ -57,6 +110,33 @@ fn main() {
             continue;
         }
         print_ls_for_date(&date, &target, show_hyperlink);
+    }
+}
+
+fn run_enum(root_path: &Path, input_path: &Path, separator: String) {
+    if !input_path.is_absolute() {
+        eprintln!("error: input-path must be absolute");
+        std::process::exit(2);
+    }
+
+    let dates = match list_dates(root_path) {
+        Ok(dates) => dates,
+        Err(err) => {
+            eprintln!("error: failed to read {}: {err}", root_path.display());
+            std::process::exit(1);
+        }
+    };
+
+    let mut first = true;
+    for date in dates {
+        let target = make_target_path(root_path, &date, input_path);
+        if target.is_dir() {
+            if !first {
+                print!("{separator}");
+            }
+            first = false;
+            print!("{}", target.display());
+        }
     }
 }
 
@@ -134,78 +214,53 @@ fn should_hyperlink(mode: &HyperlinkMode) -> bool {
     }
 }
 
-fn parse_args() -> Result<CommandLine, String> {
-    let mut root_path = PathBuf::from(OLD_ROOTS);
-    let mut input_path = None;
-    let mut hyperlink = HyperlinkMode::Auto;
-    let mut existing_only = false;
-    // let mut reverse = false;
-
-    let mut args = env::args().skip(1);
-
-    while let Some(arg) = args.next() {
-        match arg.as_str() {
-            "--help" | "-h" => {
-                return Ok(CommandLine::Help);
-            }
-            "--root-path" => {
-                let Some(path) = args.next() else {
-                    return Err("--root-path requires a path".to_string());
-                };
-                root_path = PathBuf::from(path);
-            }
-            "--existing-only" => {
-                existing_only = true;
-            }
-            "--hyperlink" => {
-                let Some(mode) = args.next() else {
-                    return Err("--hyperlink requires an argument".to_string());
-                };
-                hyperlink = match mode.as_str() {
-                    "auto" => HyperlinkMode::Auto,
-                    "always" => HyperlinkMode::Always,
-                    "never" => HyperlinkMode::Never,
-                    _ => {
-                        return Err(format!(
-                            "Invalid --hyperlink value: {mode} (expected auto, always, or never)"
-                        ));
-                    }
-                };
-            }
-            _ if arg.starts_with('-') => return Err(format!("Unknown argument: {arg}")),
-            _ => {
-                if input_path.is_some() {
-                    return Err(format!("Unexpected extra argument: {arg}"));
-                }
-                input_path = Some(PathBuf::from(arg));
-            }
+fn expand_input_path(input_path: PathBuf) -> PathBuf {
+    if input_path == Path::new("~") {
+        if let Ok(home) = env::var("HOME") {
+            return PathBuf::from(home);
         }
     }
 
-    let Some(input_path) = input_path else {
-        return Err("Missing input-path".to_string());
-    };
-
-    if !input_path.is_absolute() {
-        return Err("input-path must be absolute".to_string());
-    }
-
-    Ok(CommandLine::Run(Config {
-        root_path,
-        input_path,
-        hyperlink,
-        existing_only,
-    }))
+    input_path
 }
 
-fn print_usage() {
-    println!(
-        "Usage: oroot [OPTIONS] /absolute/path
+fn parse_separator(separator: &str) -> String {
+    let mut parsed = String::new();
+    let mut chars = separator.chars();
 
-Options:
-  --root-path PATH               Old roots directory (default: {OLD_ROOTS})
-  --hyperlink auto|always|never  Show hyperlink (OSC8) (default: auto)
-  --existing-only                Skip dates where the target path does not exist (default: false)
-  -h, --help                     Show this help"
-    );
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            parsed.push(ch);
+            continue;
+        }
+
+        match chars.next() {
+            Some('0') => parsed.push('\0'),
+            Some('n') => parsed.push('\n'),
+            Some('r') => parsed.push('\r'),
+            Some('t') => parsed.push('\t'),
+            Some('\\') => parsed.push('\\'),
+            Some(ch) => {
+                parsed.push('\\');
+                parsed.push(ch);
+            }
+            None => parsed.push('\\'),
+        }
+    }
+
+    parsed
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_separator_escapes() {
+        assert_eq!(parse_separator(r"\n"), "\n");
+        assert_eq!(parse_separator(r"\0"), "\0");
+        assert_eq!(parse_separator(r"\r\n"), "\r\n");
+        assert_eq!(parse_separator(r"\t"), "\t");
+        assert_eq!(parse_separator(r"\\"), r"\");
+    }
 }
