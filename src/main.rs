@@ -1,4 +1,5 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::{Shell, generate};
 use std::{
     env, fs,
     io::{self, IsTerminal},
@@ -43,6 +44,9 @@ enum Commands {
 
         input_path: PathBuf,
     },
+    Completion {
+        shell: Shell,
+    },
 }
 
 #[derive(Clone, ValueEnum)]
@@ -85,7 +89,18 @@ fn main() {
             &expand_input_path(input_path),
             parse_separator(&separator),
         ),
+        Commands::Completion { shell } => print_completion(shell),
     }
+}
+
+fn print_completion(shell: Shell) {
+    let mut command = Cli::command();
+    generate(
+        shell,
+        &mut command,
+        env!("CARGO_PKG_NAME"),
+        &mut io::stdout(),
+    );
 }
 
 fn run_ls(cfg: Config) {
