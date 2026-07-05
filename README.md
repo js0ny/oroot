@@ -13,6 +13,12 @@ List the contents of the same path across old roots:
 oroot ls /home/username/.config
 ```
 
+Show only snapshots where that path is a non-empty directory:
+
+```sh
+oroot ls --non-empty /home/username/.config
+```
+
 Enumerate matching directories for integration with other programs:
 
 ```sh
