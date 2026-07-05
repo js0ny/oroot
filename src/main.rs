@@ -15,6 +15,7 @@ struct Config {
     input_path: PathBuf,
     hyperlink: HyperlinkMode,
     existing_only: bool,
+    non_empty: bool,
 }
 
 #[derive(Parser)]
@@ -35,6 +36,10 @@ enum Commands {
 
         #[arg(long)]
         existing_only: bool,
+
+        /// Only show snapshots where the input path is a non-empty directory
+        #[arg(long)]
+        non_empty: bool,
 
         input_path: PathBuf,
     },
@@ -74,12 +79,14 @@ fn main() {
             root_path,
             hyperlink,
             existing_only,
+            non_empty,
             input_path,
         } => run_ls(Config {
             root_path,
             input_path: expand_input_path(input_path),
             hyperlink,
             existing_only,
+            non_empty,
         }),
         Commands::Enum {
             separator,
@@ -124,7 +131,17 @@ fn run_ls(cfg: Config) {
         if cfg.existing_only && !target.exists() {
             continue;
         }
+        if cfg.non_empty && !is_non_empty_dir(&target) {
+            continue;
+        }
         print_ls_for_date(&date, &target, show_hyperlink);
+    }
+}
+
+fn is_non_empty_dir(path: &Path) -> bool {
+    match fs::read_dir(path) {
+        Ok(mut entries) => entries.next().is_some(),
+        Err(_) => false,
     }
 }
 
