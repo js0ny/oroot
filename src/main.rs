@@ -52,6 +52,12 @@ enum Commands {
     Completion {
         shell: Shell,
     },
+    Ln {
+        #[arg(short, long)]
+        force: bool,
+        input_path: PathBuf,
+        date: String,
+    },
 }
 
 #[derive(Clone, ValueEnum)]
@@ -96,6 +102,11 @@ fn main() {
             &expand_input_path(input_path),
             parse_separator(&separator),
         ),
+        Commands::Ln {
+            input_path,
+            date,
+            force,
+        } => run_ln(Path::new(OLD_ROOTS), &expand_input_path(input_path), &date, force),
         Commands::Completion { shell } => print_completion(shell),
     }
 }
@@ -108,6 +119,44 @@ fn print_completion(shell: Shell) {
         env!("CARGO_PKG_NAME"),
         &mut io::stdout(),
     );
+}
+
+fn run_ln(root_path: &Path, input_path: &Path, date: &str, force: bool) {
+    if !input_path.is_absolute() {
+        eprintln!("error: input-path must be absolute");
+        std::process::exit(2);
+    }
+    if input_path.symlink_metadata().is_ok() && !force {
+        eprintln!("error: current path exists");
+        std::process::exit(2);
+    }
+    let target = make_target_path(root_path, date, input_path);
+    if !target.exists() {
+        eprintln!("error: concatenated path does not exist");
+        std::process::exit(2);
+    }
+    let flag = match force {
+        true => "-sfT",
+        false => "-sT",
+    };
+    match Command::new("ln")
+        .arg(flag)
+        .arg(&target)
+        .arg(input_path)
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            print!("{}", String::from_utf8_lossy(&output.stdout));
+        }
+        Ok(output) => {
+            eprint!("{}", String::from_utf8_lossy(&output.stderr));
+            std::process::exit(1);
+        }
+        Err(err) => {
+            eprintln!("error: {err}");
+            std::process::exit(1);
+        }
+    }
 }
 
 fn run_ls(cfg: Config) {
