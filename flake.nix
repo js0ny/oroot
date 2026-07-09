@@ -55,6 +55,7 @@
           pkgs = import nixpkgs { inherit system; };
           ciDeps = with pkgs; [
             cargo
+            clippy
             rustc
           ];
           devDeps = with pkgs; [

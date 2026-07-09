@@ -274,12 +274,11 @@ fn print_ls_for_date(date: &str, target: &Path, show_hyperlink: bool) {
 fn print_date_header(date: &str, target: &Path, show_hyperlink: bool) {
     let text = format!("{date}:");
 
-    if show_hyperlink {
-        if let Ok(url) = Url::from_file_path(target) {
+    if show_hyperlink
+        && let Ok(url) = Url::from_file_path(target) {
             println!("{}", hyperlink(&text, url.as_str()));
             return;
         }
-    }
     println!("{text}");
 }
 
@@ -296,11 +295,10 @@ fn should_hyperlink(mode: &HyperlinkMode) -> bool {
 }
 
 fn expand_input_path(input_path: PathBuf) -> PathBuf {
-    if input_path == Path::new("~") {
-        if let Ok(home) = env::var("HOME") {
+    if input_path == Path::new("~")
+        && let Ok(home) = env::var("HOME") {
             return PathBuf::from(home);
         }
-    }
 
     input_path
 }
